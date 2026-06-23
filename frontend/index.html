@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>GrantGuard — Milestone grants released by an on-chain AI reviewer</title>
+<style>
+  /* ------------------------------------------------------------------
+     GrantGuard — visual identity: a "disbursement gate".
+     Funds sit behind milestone gates; each gate opens only when the
+     AI reviewer verifies the deliverable. Ink-navy ground, ledger
+     cream panels, a single release-green reserved for APPROVED tranches.
+     ------------------------------------------------------------------ */
+  :root{
+    --bg:        #10151f;
+    --bg-soft:   #161d2b;
+    --panel:     #f5f2ea;
+    --panel-2:   #ece7da;
+    --ink:       #131a26;
+    --ink-soft:  #51596a;
+    --line:      #d4cdbd;
+    --release:   #1f7a4d;   /* reserved: approved/released only */
+    --release-d: #155c39;
+    --reject:    #a23a2e;   /* reserved: rejected only */
+    --gold:      #b6912f;
+    --paper-line:#c9c1ad;
+  }
+  *{ box-sizing:border-box; }
+  body{
+    margin:0; background:
+      radial-gradient(130% 90% at 50% -10%, #1b2438 0%, var(--bg-soft) 45%, var(--bg) 100%);
+    color:var(--panel);
+    font-family:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;
+    line-height:1.55; min-height:100vh;
+  }
+  .wrap{ max-width:960px; margin:0 auto; padding:30px 20px 80px; }
+
+  header.top{ border-bottom:1px solid rgba(255,255,255,.14); padding-bottom:16px; }
+  .eyebrow{ font-family:"Courier New",ui-monospace,monospace; text-transform:uppercase;
+            letter-spacing:.3em; font-size:11px; color:#8b93a6; margin:0 0 10px; }
+  h1{ font-size:clamp(32px,6.5vw,54px); line-height:1; margin:0; letter-spacing:-.01em; color:#fff; }
+  h1 .g{ color:var(--release); }
+  .tag{ display:block; font-style:italic; font-size:.4em; color:#aab2c4; margin-top:12px; letter-spacing:0; }
+  .colophon{ display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap;
+             font-family:"Courier New",monospace; font-size:11px; margin-top:12px;
+             color:#8b93a6; text-transform:uppercase; letter-spacing:.12em; }
+  .top-actions{ display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-bottom:24px; }
+
+  .lede{ font-size:18px; color:#c3c9d6; max-width:64ch; margin:24px 0 26px; }
+  .lede b{ color:#fff; font-weight:600; }
+
+  .demo-flag{ display:inline-flex; align-items:center; gap:8px; font-family:"Courier New",monospace;
+              font-size:11px; letter-spacing:.12em; text-transform:uppercase; color:var(--gold);
+              border:1px solid var(--gold); border-radius:2px; padding:5px 10px; margin-bottom:24px; }
+  .demo-flag::before{ content:""; width:7px; height:7px; background:var(--gold); border-radius:50%; }
+  .demo-flag.is-ok{ color:var(--release); border-color:var(--release); }
+  .demo-flag.is-ok::before{ background:var(--release); }
+  .demo-flag.is-warn{ color:#ffcf75; border-color:#ffcf75; }
+  .demo-flag.is-warn::before{ background:#ffcf75; }
+
+  .grid{ display:grid; grid-template-columns:1fr 1fr; gap:20px; }
+  @media (max-width:820px){ .grid{ grid-template-columns:1fr; } }
+
+  .card{ background:var(--panel); color:var(--ink); border-radius:4px; padding:20px 20px 22px;
+         box-shadow:0 16px 40px -26px rgba(0,0,0,.8); }
+  .card h2{ font-size:13px; text-transform:uppercase; letter-spacing:.18em; font-family:"Courier New",monospace;
+            margin:0 0 4px; }
+  .card .hint{ font-size:13px; color:var(--ink-soft); margin:0 0 14px; font-style:italic; }
+
+  label{ display:block; font-size:12px; letter-spacing:.07em; text-transform:uppercase; color:var(--ink-soft);
+         margin:12px 0 5px; font-family:"Courier New",monospace; }
+  input,textarea{ width:100%; background:#fffdf8; border:1px solid var(--line); border-radius:2px;
+                  padding:10px 11px; color:var(--ink); font-family:"Courier New",ui-monospace,monospace; font-size:14px; }
+  input:focus,textarea:focus{ outline:2px solid var(--gold); outline-offset:1px; border-color:var(--gold); }
+  textarea{ resize:vertical; min-height:54px; }
+  .ms-row{ display:grid; grid-template-columns:1fr 110px; gap:8px; margin-bottom:8px; }
+  .ms-row input{ margin:0; }
+  .mini{ font-family:"Courier New",monospace; font-size:11px; color:var(--ink-soft);
+         background:none; border:1px dashed var(--line); color:var(--ink); width:auto; padding:7px 12px;
+         text-transform:uppercase; letter-spacing:.08em; cursor:pointer; margin-top:4px; }
+
+  button.primary{ cursor:pointer; font-family:"Courier New",monospace; letter-spacing:.1em; text-transform:uppercase;
+                  font-size:12px; font-weight:700; border:1px solid var(--ink); background:var(--ink); color:var(--panel);
+                  padding:11px 16px; border-radius:2px; margin-top:16px; width:100%; }
+  button.primary:hover{ background:#000; }
+  button.primary:disabled{ opacity:.5; cursor:not-allowed; }
+
+  .ledger{ margin-top:30px; background:var(--panel); color:var(--ink); border-radius:4px; overflow:hidden;
+           box-shadow:0 16px 40px -26px rgba(0,0,0,.8); }
+  .ledger-head{ display:flex; justify-content:space-between; align-items:baseline; gap:12px;
+                padding:16px 20px; border-bottom:1px solid var(--line); }
+  .ledger-head h2{ font-family:"Courier New",monospace; font-size:13px; letter-spacing:.18em;
+                   text-transform:uppercase; margin:0; }
+  .ledger-head .meta{ font-family:"Courier New",monospace; font-size:12px; color:var(--ink-soft); }
+  .ledger-actions{ display:none; align-items:center; gap:10px; flex-wrap:wrap; padding:14px 20px; border-bottom:1px solid var(--line); }
+  .ledger-actions .mini{ margin-top:0; }
+  .ledger-note{ font-family:"Courier New",monospace; font-size:11px; color:var(--ink-soft); }
+
+  .empty{ padding:26px 20px; font-style:italic; color:var(--ink-soft); }
+
+  .gate{ display:flex; gap:16px; padding:18px 20px; border-bottom:1px solid var(--line); }
+  .gate:last-child{ border-bottom:0; }
+  .rail{ position:relative; width:18px; flex:0 0 18px; }
+  .rail .dot{ width:14px; height:14px; border-radius:50%; border:2px solid var(--ink-soft); background:var(--panel);
+              position:absolute; left:1px; top:3px; }
+  .gate.released .dot{ background:var(--release); border-color:var(--release-d); }
+  .gate.rejected .dot{ background:var(--reject); border-color:var(--reject); }
+  .gate.submitted .dot{ background:var(--gold); border-color:var(--gold); }
+  .rail::after{ content:""; position:absolute; left:7px; top:18px; bottom:-18px; width:2px; background:var(--line); }
+  .gate:last-child .rail::after{ display:none; }
+
+  .gate-body{ flex:1; }
+  .gate-top{ display:flex; justify-content:space-between; gap:12px; align-items:baseline; }
+  .gate-desc{ font-size:16px; margin:0; }
+  .gate-pay{ font-family:"Courier New",monospace; font-size:13px; white-space:nowrap; }
+  .badge{ font-family:"Courier New",monospace; font-size:10px; letter-spacing:.14em; text-transform:uppercase;
+          padding:2px 8px; border-radius:2px; border:1px solid var(--ink-soft); color:var(--ink-soft); }
+  .gate.released .badge{ color:var(--release-d); border-color:var(--release); }
+  .gate.rejected .badge{ color:var(--reject); border-color:var(--reject); }
+  .gate.submitted .badge{ color:var(--gold); border-color:var(--gold); }
+
+  .gate-actions{ margin-top:10px; display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  .gate-actions input{ flex:1; min-width:180px; margin:0; }
+  .gate-actions button{ cursor:pointer; font-family:"Courier New",monospace; font-size:11px; letter-spacing:.08em;
+                        text-transform:uppercase; border:1px solid var(--ink); background:var(--ink); color:var(--panel);
+                        padding:9px 12px; border-radius:2px; }
+  .gate-actions button.alt{ background:transparent; color:var(--ink); }
+  .gate-reason{ margin-top:10px; font-style:italic; color:var(--ink-soft); font-size:14px; }
+  .gate-reason .conf{ font-style:normal; font-family:"Courier New",monospace; font-size:11px; color:var(--ink-soft); }
+
+  .reviewing{ display:none; align-items:center; gap:10px; margin-top:10px;
+              font-family:"Courier New",monospace; font-size:12px; color:var(--ink-soft); }
+  .reviewing.show{ display:flex; }
+  .spin{ width:15px; height:15px; border:2px solid var(--line); border-top-color:var(--gold); border-radius:50%;
+         animation:spin .8s linear infinite; }
+  @keyframes spin{ to{ transform:rotate(360deg); } }
+
+  footer{ margin-top:46px; border-top:1px solid rgba(255,255,255,.14); padding-top:16px;
+          font-family:"Courier New",monospace; font-size:11px; color:#8b93a6; letter-spacing:.06em; line-height:1.7; }
+  footer code{ background:rgba(255,255,255,.08); padding:1px 5px; border-radius:2px; color:#c3c9d6; }
+  footer i{ color:#c3c9d6; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="top">
+    <p class="eyebrow">Conditional capital · released on proof</p>
+    <h1><span class="g">Grant</span>Guard<span class="tag">Milestone grants that pay out only when an on-chain AI verifies the work was actually done.</span></h1>
+    <div class="colophon">
+      <span>Intelligent Contract · GenLayer</span>
+      <span id="net">Network: demo</span>
+      <span id="contractMeta">Contract: —</span>
+      <span id="rpcMeta">RPC: —</span>
+    </div>
+  </header>
+
+  <p class="lede">
+    A funder locks the full grant up front, split into milestones. The grantee submits a link as proof
+    for each milestone — a public transcript, a paper, a repository. The contract <b>reads that page from
+    the live web</b> and an <b>AI reviewer judges whether the deliverable was genuinely met</b> before
+    releasing that tranche. <b>No blind disbursement, no grant officer.</b>
+  </p>
+
+  <div class="top-actions">
+    <span class="demo-flag" id="demoFlag">Live contract status: checking...</span>
+    <button class="mini" id="connectBtn">Connect wallet</button>
+  </div>
+
+  <div class="grid">
+    <!-- CREATE -->
+    <section class="card">
+      <h2>① Create a grant</h2>
+      <p class="hint">You are the funder. Define milestones; the deposit must equal their sum in GEN.</p>
+      <label for="gTitle">Grant title</label>
+      <input id="gTitle" placeholder="e.g. Open-source climate dataset, Phase 1" />
+      <label for="gGrantee">Grantee address</label>
+      <input id="gGrantee" placeholder="0x…" />
+      <label>Milestones (deliverable &amp; payout in GEN)</label>
+      <div id="msList">
+        <div class="ms-row">
+          <input class="ms-desc" placeholder="Deliverable, e.g. Publish cleaned dataset v1 with docs" />
+          <input class="ms-pay" type="number" min="0" step="0.01" placeholder="GEN" value="50" />
+        </div>
+      </div>
+      <button class="mini" id="addMs">+ add milestone</button>
+      <button class="primary" id="createBtn">Lock funds &amp; create grant</button>
+    </section>
+
+    <!-- LOAD -->
+    <section class="card">
+      <h2>② Open a grant</h2>
+      <p class="hint">Load any grant by ID to act as grantee or funder.</p>
+      <label for="loadId">Grant ID</label>
+      <input id="loadId" type="number" min="0" placeholder="0" />
+      <button class="primary" id="loadBtn">Load grant record</button>
+      <p class="hint" style="margin-top:16px">
+        Grantee: submit an evidence URL on a milestone, then request review.<br/>
+        Funder: cancel only works before any submission.
+      </p>
+    </section>
+  </div>
+
+  <!-- LEDGER -->
+  <section class="ledger">
+    <div class="ledger-head">
+      <h2>Grant record</h2>
+      <span class="meta" id="ledgerMeta">— no grant loaded —</span>
+    </div>
+    <div class="ledger-actions" id="grantActions">
+      <button class="mini" id="cancelBtn">Cancel grant</button>
+      <button class="mini" id="withdrawBtn">Withdraw</button>
+      <span class="ledger-note" id="ledgerNotice"></span>
+    </div>
+    <div class="empty" id="ledgerEmpty">Create or load a grant to see its milestone gates.</div>
+    <div id="gates"></div>
+  </section>
+
+  <footer>
+    Why this dies without GenLayer: a Solidity contract cannot open a transcript, paper, or repo, read it,
+    and decide <i>"was this milestone actually achieved?"</i>. GrantGuard's release decision is read from the
+    live web and reasoned by an LLM under validator consensus — on-chain.<br/>
+    This build reads and writes against the live contract configured through
+    <code>VITE_GRANTGUARD_CONTRACT_ADDRESS</code>, <code>VITE_GENLAYER_NETWORK</code>, and
+    <code>VITE_GENLAYER_RPC</code>.
+  </footer>
+</div>
+<script type="module" src="/src/main.ts"></script>
+</body>
+</html>
