@@ -1,6 +1,7 @@
 import { createClient } from "genlayer-js";
 import { localnet, studionet, testnetAsimov, testnetBradbury } from "genlayer-js/chains";
 import { ExecutionResult, TransactionStatus } from "genlayer-js/types";
+import type { TransactionHash } from "genlayer-js/types";
 import type { Address } from "viem";
 
 export type MilestoneStatus = 0 | 1 | 2 | 3;
@@ -68,6 +69,13 @@ declare global {
 const CONTRACT_ADDRESS = import.meta.env.VITE_GRANTGUARD_CONTRACT_ADDRESS as Address;
 const NETWORK = (import.meta.env.VITE_GENLAYER_NETWORK ?? "studionet") as SupportedNetwork;
 const RPC_URL = import.meta.env.VITE_GENLAYER_RPC as string | undefined;
+
+const EXPLORER_BASE_BY_NETWORK: Record<SupportedNetwork, string> = {
+  localnet: "",
+  studionet: "https://explorer-studio.genlayer.com",
+  testnetAsimov: "https://asimov-explorer.genlayer.com",
+  testnetBradbury: "https://bradbury-explorer.genlayer.com",
+};
 
 const REQUIRED_METHODS = [
   "cancel_grant",
@@ -181,7 +189,7 @@ function ensureExecutionSucceeded(receipt: GenLayerReceipt, txHash: string): voi
 
 async function waitForFinalizedReceipt(txHash: string): Promise<GenLayerReceipt> {
   const receipt = (await readClient.waitForTransactionReceipt({
-    hash: txHash,
+    hash: txHash as TransactionHash,
     status: TransactionStatus.FINALIZED,
     interval: 5_000,
     retries: 60,
@@ -407,8 +415,61 @@ export async function withdraw(): Promise<WriteResult> {
   return { txHash };
 }
 
+export interface RecentGrant extends GrantState {
+  release_summary: {
+    released_count: number;
+    released_wei: bigint;
+  };
+}
+
+export async function listRecentGrants(limit = 6): Promise<RecentGrant[]> {
+  const total = await totalGrants();
+  if (total === 0) {
+    return [];
+  }
+
+  // Newest first — grant_count increments per create.
+  const start = total - 1;
+  const stop = Math.max(0, total - limit);
+  const ids: number[] = [];
+  for (let i = start; i >= stop; i--) {
+    ids.push(i);
+  }
+
+  const raw = await Promise.all(ids.map((id) => getGrant(id)));
+  const grants: RecentGrant[] = [];
+  for (const g of raw) {
+    if (!g) {
+      continue;
+    }
+    const milestoneStates = await Promise.all(
+      Array.from({ length: g.milestone_count }, (_, index) => getMilestone(g.id, index))
+    );
+    const released = milestoneStates
+      .filter((m): m is MilestoneState => m !== null && m.status === 2)
+      .reduce((sum, m) => sum + m.payout, 0n);
+    const releasedCount = milestoneStates.filter((m) => m && m.status === 2).length;
+    grants.push({
+      ...g,
+      release_summary: { released_count: releasedCount, released_wei: released },
+    });
+  }
+  return grants;
+}
+
+export function contractExplorerUrl(): string {
+  const base = EXPLORER_BASE_BY_NETWORK[NETWORK];
+  return base ? `${base}/address/${CONTRACT_ADDRESS}` : "";
+}
+
+export function txExplorerUrl(txHash: string): string {
+  const base = EXPLORER_BASE_BY_NETWORK[NETWORK];
+  return base ? `${base}/tx/${txHash}` : "";
+}
+
 export const config = {
   contractAddress: CONTRACT_ADDRESS,
   network: NETWORK,
   rpcUrl: endpoint,
+  explorerBase: EXPLORER_BASE_BY_NETWORK[NETWORK] || "",
 };
