@@ -1,105 +1,160 @@
 """
-Tests for the GrantGuard contract.
+Deterministic edge-case tests for GrantGuard.
 
-NOTE: These target the GenLayer test harness (gltest / genlayer test runner).
-The exact import path and helper API are NOT verified here — wire them to your
-installed GenLayer tooling.
+These use `gltest` to deploy the real Intelligent Contract into a fresh test
+context and exercise the state machine and guard clauses. They do NOT exercise
+`review_milestone`, because that path is non-deterministic (LLM + live web) and
+belongs in a separate integration harness with `sim_installMocks`.
 
-    # TODO: verify GenLayer test framework import + API.
-    # e.g. from genlayer_test import deploy_contract, get_accounts
+Run:
 
-Coverage (maps to rubric edge cases):
-  - deposit must equal sum of milestone payouts
-  - zero payout rejected
-  - funder cannot be grantee
-  - only grantee can submit; only funder can cancel
-  - cannot cancel after a submission
-  - double-submit / review-when-not-submitted rejected
-  - happy path: APPROVE releases a tranche; all approved -> grant COMPLETE
-  - REJECT path: no funds move, grantee can resubmit
-  - dead URL -> REJECT (run on testnet)
+    # 1. Fast local iteration (needs a local GenLayer node on 127.0.0.1:4000)
+    gltest --network localnet
+
+    # 2. Against studionet (needs GEN in your default account)
+    gltest --network studionet
+
+Coverage:
+    * deposit must equal sum of milestone payouts
+    * zero payout rejected
+    * mismatched description / payout lengths rejected
+    * funder cannot be grantee
+    * only grantee can submit; only funder can cancel
+    * cannot cancel after a submission has been made
+    * cannot review a milestone that is not SUBMITTED
+    * happy submit flow lands the milestone in SUBMITTED
+    * total_grants view increments correctly
 """
 
-import json
+from pathlib import Path
+
 import pytest
 
-# from genlayer_test import deploy_contract, get_accounts  # TODO: verify
-
-CONTRACT_PATH = "contracts/grantguard.py"
+from gltest import get_accounts, get_contract_factory
 
 
-@pytest.mark.skip(reason="Wire up GenLayer test harness (TODO: verify API)")
+CONTRACT_PATH = str(Path(__file__).resolve().parent.parent / "contracts" / "grantguard.py")
+
+
+def _deploy_fresh():
+    """Deploy a clean GrantGuard for the current test."""
+    factory = get_contract_factory(contract_file_path=CONTRACT_PATH)
+    contract = factory.deploy(args=[])
+    accounts = get_accounts()
+    if len(accounts) < 3:
+        pytest.skip("Need at least 3 configured test accounts")
+    return contract, accounts[0], accounts[1], accounts[2]
+
+
+def _payout_wei(gen_units):
+    """Milestone payouts are u256 wei-style ints; 1 GEN = 10**18."""
+    return int(gen_units) * (10 ** 18)
+
+
 def test_deposit_must_equal_sum():
-    c, acc = _deploy()
+    contract, funder, grantee, _ = _deploy_fresh()
+    payouts = [_payout_wei(50), _payout_wei(50)]
     with pytest.raises(Exception):
-        c.create_grant("G", acc[1], ["m1", "m2"], [50, 50], value=80, sender=acc[0])
+        contract.connect(funder).create_grant(
+            args=["G", grantee.address, ["m1", "m2"], payouts]
+        ).transact(value=_payout_wei(80))
 
 
-@pytest.mark.skip(reason="Wire up GenLayer test harness (TODO: verify API)")
 def test_zero_payout_rejected():
-    c, acc = _deploy()
+    contract, funder, grantee, _ = _deploy_fresh()
     with pytest.raises(Exception):
-        c.create_grant("G", acc[1], ["m1"], [0], value=0, sender=acc[0])
+        contract.connect(funder).create_grant(
+            args=["G", grantee.address, ["m1"], [0]]
+        ).transact(value=0)
 
 
-@pytest.mark.skip(reason="Wire up GenLayer test harness (TODO: verify API)")
+def test_length_mismatch_rejected():
+    contract, funder, grantee, _ = _deploy_fresh()
+    with pytest.raises(Exception):
+        contract.connect(funder).create_grant(
+            args=["G", grantee.address, ["a", "b"], [_payout_wei(10)]]
+        ).transact(value=_payout_wei(10))
+
+
 def test_funder_cannot_be_grantee():
-    c, acc = _deploy()
+    contract, funder, _grantee, _ = _deploy_fresh()
     with pytest.raises(Exception):
-        c.create_grant("G", acc[0], ["m1"], [50], value=50, sender=acc[0])
+        contract.connect(funder).create_grant(
+            args=["G", funder.address, ["m1"], [_payout_wei(50)]]
+        ).transact(value=_payout_wei(50))
 
 
-@pytest.mark.skip(reason="Wire up GenLayer test harness (TODO: verify API)")
 def test_only_grantee_can_submit():
-    c, acc = _deploy()
-    gid = c.create_grant("G", acc[1], ["m1"], [50], value=50, sender=acc[0])
+    contract, funder, grantee, stranger = _deploy_fresh()
+    contract.connect(funder).create_grant(
+        args=["G", grantee.address, ["m1"], [_payout_wei(50)]]
+    ).transact(value=_payout_wei(50))
+
     with pytest.raises(Exception):
-        c.submit_milestone(gid, 0, "https://example.com/p", sender=acc[2])
+        contract.connect(stranger).submit_milestone(
+            args=[0, 0, "https://example.com/p"]
+        ).transact()
 
 
-@pytest.mark.skip(reason="Wire up GenLayer test harness (TODO: verify API)")
 def test_cannot_cancel_after_submission():
-    c, acc = _deploy()
-    gid = c.create_grant("G", acc[1], ["m1"], [50], value=50, sender=acc[0])
-    c.submit_milestone(gid, 0, "https://example.com/p", sender=acc[1])
+    contract, funder, grantee, _ = _deploy_fresh()
+    contract.connect(funder).create_grant(
+        args=["G", grantee.address, ["m1"], [_payout_wei(50)]]
+    ).transact(value=_payout_wei(50))
+
+    contract.connect(grantee).submit_milestone(
+        args=[0, 0, "https://example.com/p"]
+    ).transact()
+
     with pytest.raises(Exception):
-        c.cancel_grant(gid, sender=acc[0])
+        contract.connect(funder).cancel_grant(args=[0]).transact()
 
 
-@pytest.mark.skip(reason="Wire up GenLayer test harness (TODO: verify API)")
 def test_review_requires_submission():
-    c, acc = _deploy()
-    gid = c.create_grant("G", acc[1], ["m1"], [50], value=50, sender=acc[0])
+    contract, funder, grantee, _ = _deploy_fresh()
+    contract.connect(funder).create_grant(
+        args=["G", grantee.address, ["m1"], [_payout_wei(50)]]
+    ).transact(value=_payout_wei(50))
+
     with pytest.raises(Exception):
-        c.review_milestone(gid, 0, sender=acc[0])
+        contract.connect(funder).review_milestone(args=[0, 0]).transact()
 
 
-# --- AI-dependent (run on testnet) ---
+def test_submit_lands_in_submitted_state():
+    contract, funder, grantee, _ = _deploy_fresh()
+    contract.connect(funder).create_grant(
+        args=["G", grantee.address, ["Publish dataset v1"], [_payout_wei(50)]]
+    ).transact(value=_payout_wei(50))
 
-@pytest.mark.skip(reason="Run on testnet; AI + web access required")
-def test_dead_url_rejects_no_funds_move():
-    c, acc = _deploy()
-    gid = c.create_grant("G", acc[1], ["Publish dataset"], [50], value=50, sender=acc[0])
-    c.submit_milestone(gid, 0, "https://nope-grantguard.invalid/x", sender=acc[1])
-    c.review_milestone(gid, 0, sender=acc[0])
-    ms = json.loads(c.get_milestone(gid, 0))
-    assert ms["status"] == 3  # REJECTED
-    assert c.get_withdrawable(acc[1]) == 0
+    contract.connect(grantee).submit_milestone(
+        args=[0, 0, "https://example.com/proof"]
+    ).transact()
 
+    # Read the milestone back and confirm state == 1 (SUBMITTED).
+    import json as _json
 
-@pytest.mark.skip(reason="Run on testnet; AI + web access required")
-def test_happy_path_release_and_complete():
-    c, acc = _deploy()
-    gid = c.create_grant("G", acc[1], ["Publish dataset v1"], [50], value=50, sender=acc[0])
-    c.submit_milestone(gid, 0, "https://real-evidence.example/dataset", sender=acc[1])
-    c.review_milestone(gid, 0, sender=acc[0])
-    grant = json.loads(c.get_grant(gid))
-    ms = json.loads(c.get_milestone(gid, 0))
-    if ms["status"] == 2:  # RELEASED
-        assert grant["status"] == 1  # COMPLETE (single milestone)
-        assert c.get_withdrawable(acc[1]) == 50
+    raw = contract.get_milestone(args=[0, 0]).call()
+    parsed = _json.loads(raw)
+    assert parsed["status"] == 1
+    assert parsed["evidence_url"] == "https://example.com/proof"
 
 
-def _deploy():
-    # TODO: verify — replace with real GenLayer deploy + accounts helpers.
-    raise NotImplementedError("Wire up GenLayer test harness")
+def test_total_grants_increments():
+    contract, funder, grantee, _ = _deploy_fresh()
+    assert int(contract.total_grants(args=[]).call()) == 0
+
+    contract.connect(funder).create_grant(
+        args=["G1", grantee.address, ["m"], [_payout_wei(10)]]
+    ).transact(value=_payout_wei(10))
+    assert int(contract.total_grants(args=[]).call()) == 1
+
+    contract.connect(funder).create_grant(
+        args=["G2", grantee.address, ["m"], [_payout_wei(20)]]
+    ).transact(value=_payout_wei(20))
+    assert int(contract.total_grants(args=[]).call()) == 2
+
+
+def test_withdraw_nothing_reverts():
+    contract, funder, _, _ = _deploy_fresh()
+    with pytest.raises(Exception):
+        contract.connect(funder).withdraw(args=[]).transact()
