@@ -1,31 +1,32 @@
 # GrantGuard — Milestone grants released by an on-chain AI reviewer
 
 > A funder locks a grant up front, split into milestones. The grantee submits a
-> link as proof for each milestone — a public transcript, a paper, a repository.
-> GrantGuard's Intelligent Contract **reads that page from the live web** and an
-> **AI reviewer judges whether the deliverable was genuinely met** before
-> releasing that tranche. No blind disbursement, no human grant officer.
+> link as proof for each milestone — a public transcript, a paper, a
+> repository. GrantGuard's Intelligent Contract **reads that page from the live
+> web** and an **AI reviewer judges whether the deliverable was genuinely met**
+> before releasing that tranche. No blind disbursement, no human grant officer.
 
-**One-line pitch:** *GrantGuard dies without GenLayer, because deciding "was this
-qualitative milestone actually achieved?" requires reading the open web and
-forming a subjective judgment on-chain — something Solidity fundamentally cannot do.*
+**One-line pitch.** *GrantGuard dies without GenLayer, because deciding "was
+this qualitative milestone actually achieved?" needs to open the open web,
+read it, and form a subjective judgment on-chain — something Solidity cannot
+do.*
+
+- **Network:** [studionet](https://studio.genlayer.com) — status: **Preview**
+- **Contract:** [`0xACe566a3440c2A5f37c32616F1C59625ac8EA2B9`](https://explorer-studio.genlayer.com/address/0xACe566a3440c2A5f37c32616F1C59625ac8EA2B9)
+- **Live app:** <https://grantguard-gen.vercel.app>
 
 ---
 
 ## The problem
 
-Grants, scholarships, and research funding are disbursed on trust and slow manual
-review. Funds either go out blindly against a checkbox, or a human officer reads
-the deliverable and decides — slow, centralized, and subjective. There is no
-clean numeric oracle for "the dataset was actually published with docs" or "the
-paper meets the milestone."
-
-## Why Solidity can't do this
-
-A traditional smart contract can hold and release funds, but it **cannot open a
-transcript, paper, or repo, read it, and form a judgment** that a qualitative
-deliverable was genuinely met. Pushing that judgment off-chain reintroduces the
-trusted intermediary GrantGuard removes.
+Grants, scholarships, and research funding are disbursed on trust and slow
+manual review. Funds either go out blindly against a checkbox, or a human
+officer reads the deliverable and decides. There is no clean numeric oracle
+for "the dataset was actually published with docs" or "the paper meets the
+milestone." Solidity smart contracts can hold and move money, but they cannot
+open a transcript, paper, or repo, read it, and form a judgment that a
+qualitative deliverable was genuinely met — pushing that judgment off-chain
+re-introduces the trusted intermediary GrantGuard removes.
 
 ## How GenLayer solves it
 
@@ -34,98 +35,100 @@ The release decision runs inside the contract, wrapped in validator consensus:
 1. **`gl.nondet.web.render(url, mode="text")`** — the contract opens the
    grantee's evidence URL and reads its actual content on-chain.
 2. **`gl.nondet.exec_prompt(task, response_format="json")`** — an LLM judges
-   whether the evidence demonstrates the milestone was met *in spirit*, returning
-   `verdict` (APPROVE/REJECT), `confidence`, and `reason`.
+   whether the evidence demonstrates the milestone was met *in spirit*, and
+   returns `verdict` (`APPROVE`/`REJECT`), `confidence` (0–100), and `reason`.
 
-Consensus is reached on the **meaning** of the decision (via
-`gl.eq_principle.prompt_comparative`): validators must agree on APPROVE vs REJECT,
-not on exact JSON bytes. Only an APPROVE moves money.
+Consensus is reached on the **meaning** of the decision, not on exact JSON
+bytes: `gl.eq_principle.prompt_comparative` requires the validators to agree
+on the verdict AND on `confidence` within 15 points; the free-form `reason`
+text is deliberately allowed to vary. Two validators that disagree on
+`APPROVE` vs `REJECT` fail consensus rather than both passing a schema check.
+
+An `APPROVE` verdict with confidence below the release threshold (`60/100`) is
+downgraded to `REJECT` and the grantee is asked to strengthen the evidence,
+so a hesitant judgment never releases funds.
 
 ```
 funder locks total ──► milestone gates [LOCKED]
 grantee submits URL ──► [SUBMITTED]
        review_milestone() ──► web.render(url) ──► exec_prompt (judge "met in spirit?")
-                                       │ consensus on APPROVE/REJECT
-                       ┌───────────────┴───────────────┐
-                   APPROVE                          REJECT
-              release tranche [RELEASED]      no funds; grantee may resubmit [REJECTED]
+                                        │ consensus on APPROVE/REJECT (+ confidence ±15)
+                       ┌────────────────┴────────────────┐
+                   APPROVE (conf ≥ 60)             REJECT / low confidence / bad JSON / dead URL
+              release tranche [RELEASED]        no funds; grantee may resubmit [REJECTED]
        all milestones released ──► grant COMPLETE
 ```
 
----
+## Contract interface
+
+- `create_grant(title, grantee, descriptions[], payouts[])` — **payable**. The
+  attached value must equal the exact sum of `payouts`. Returns `grant_id`.
+- `submit_milestone(grant_id, index, evidence_url)` — grantee-only.
+- `review_milestone(grant_id, index)` — runs the AI reviewer; `APPROVE`
+  credits the tranche to the grantee's pull-withdrawal ledger.
+- `cancel_grant(grant_id)` — funder-only, and only before any milestone has
+  been submitted.
+- `withdraw()` — pull-pattern payout of any owed balance via
+  `gl.chain.Account(who).emit_transfer(amount)`.
+- Views: `get_grant`, `get_milestone`, `get_withdrawable`, `total_grants`.
 
 ## Repo structure
 
 ```
 grantguard/
 ├── contracts/
-│   ├── grantguard.py     # the Intelligent Contract (core)
+│   ├── grantguard.py     # the Intelligent Contract
 │   └── storage_test.py   # minimal sanity contract — deploy FIRST
 ├── frontend/
-│   ├── index.html        # standalone demo UI (full UX, demo mode)
+│   ├── index.html        # standalone dApp
+│   ├── src/main.ts       # UI wiring
 │   ├── src/lib/genlayer.ts
+│   ├── scripts/verify_live.mjs   # wallet-free live smoke test
+│   ├── tsconfig.json
 │   ├── package.json
 │   └── .env.example
 ├── tests/
-│   └── test_grantguard.py
+│   └── test_grantguard.py     # gltest edge-case suite (deterministic paths)
 ├── scripts/
-│   └── deploy.md
+│   └── deploy.md              # deploy + seed procedure
 ├── ARCHITECTURE.md
 ├── CHANGELOG.md
 └── README.md
 ```
 
----
-
-## Contract interface
-
-- `create_grant(title, grantee, descriptions[], payouts[])` (payable) — funder
-  locks a deposit equal to the sum of payouts; returns `grant_id`.
-- `submit_milestone(grant_id, index, evidence_url)` — grantee attaches proof.
-- `review_milestone(grant_id, index)` — runs the AI reviewer; APPROVE releases
-  the tranche, REJECT lets the grantee resubmit.
-- `cancel_grant(grant_id)` — funder reclaims funds, only before any submission.
-- `withdraw()` — pull-pattern payout of any owed balance.
-- views: `get_grant`, `get_milestone`, `get_withdrawable`, `total_grants`.
-
----
-
-## ⚠️ Unverified API surface — read before trusting
-
-GenLayer's SDK and `genlayer-js` are young. Several API names are the *most
-plausible* but **not verified against a live SDK**, and are flagged with
-`# TODO: verify` / `// TODO: verify`. Check these against official GenLayer docs:
-
-- native value/transfer primitive (`gl.message.send_value`, `.value`, `.sender_address`)
-- whether `gl.eq_principle.prompt_comparative` exists in `v0.2.16` (else fall back
-  to `gl.vm.run_nondet_unsafe(leader_fn, validator_fn)`)
-- nested storage-struct syntax (contract uses parallel TreeMaps as a safe fallback)
-- the `genlayer-js` client factory + read/write method names in `genlayer.ts`
-
-The deterministic logic (state machine, deposit accounting, guard clauses, payout
-math, edge cases) does not depend on these and should hold regardless.
-
----
-
 ## Run the frontend
 
 ```bash
 cd frontend
+cp .env.example .env    # only if you're pointing at a different address
 npm install
-npm run dev
+npm run dev             # local dev server
+npm run build           # tsc typecheck + vite production build
+npm run verify:live     # wallet-free smoke test against studionet
 ```
 
-The frontend now talks to the live contract configured in `frontend/.env`:
-
-- contract: `0xACe566a3440c2A5f37c32616F1C59625ac8EA2B9`
-- network: `studionet`
-- RPC: `https://studio.genlayer.com/api`
-
-Reads work immediately against GenLayer RPC. Writes require a browser wallet
-such as MetaMask, and the app switches the wallet to the configured GenLayer
-network through `genlayer-js`.
+Reads work immediately against the studionet RPC. Writes require MetaMask
+(or another EIP-1193 wallet) on the GenLayer Studio Network, funded with GEN
+from the Studio **Accounts** panel. The wallet is switched to studionet
+automatically on connect via genlayer-js's `client.connect(NETWORK)`.
 
 ## Deploy the contract
 
 See [`scripts/deploy.md`](scripts/deploy.md). Deploy `storage_test.py` first,
-confirm **Result: SUCCESS**, then deploy `grantguard.py`.
+confirm `Result: SUCCESS`, then deploy `grantguard.py`.
+
+## Test the contract
+
+Deterministic edge cases (state machine, deposit accounting, guard clauses)
+run under [gltest](https://pypi.org/project/genlayer-test/):
+
+```bash
+pip install genlayer-test
+gltest --network localnet   # fastest
+gltest --network studionet  # against the real hosted chain
+```
+
+The AI-dependent path (`review_milestone`) is a separate integration harness
+that installs `sim_installMocks` before each transaction; it is not part of
+the pytest edge-case suite, because a live LLM call is non-deterministic by
+design.
