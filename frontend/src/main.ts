@@ -3,6 +3,7 @@ import {
   cancelGrant,
   config,
   connectAccount,
+  contractExplorerUrl,
   createGrant,
   getConnectedAddress,
   getGrant,
@@ -10,21 +11,26 @@ import {
   getWithdrawable,
   initializeContract,
   isWalletAvailable,
+  listRecentGrants,
   restoreWalletConnection,
   reviewMilestone,
   submitMilestone,
+  txExplorerUrl,
   withdraw,
   type GrantState,
   type MilestoneState,
+  type RecentGrant,
 } from "./lib/genlayer";
 
-const $ = <T extends HTMLElement>(id: string): T => {
+const $ = <T extends HTMLElement = HTMLElement>(id: string): T => {
   const el = document.getElementById(id);
   if (!el) {
     throw new Error(`Missing element #${id}`);
   }
   return el as T;
 };
+
+const $input = (id: string): HTMLInputElement => $<HTMLInputElement>(id);
 
 const STATUS = ["LOCKED", "SUBMITTED", "RELEASED", "REJECTED"] as const;
 const GSTATUS = ["OPEN", "COMPLETE", "CANCELLED"] as const;
@@ -105,10 +111,6 @@ function getIsConnectedFunder(): boolean {
   return Boolean(activeGrant && normalizeAddress(activeGrant.funder) === normalizeAddress(getConnectedAddress()));
 }
 
-function getIsConnectedGrantee(): boolean {
-  return Boolean(activeGrant && normalizeAddress(activeGrant.grantee) === normalizeAddress(getConnectedAddress()));
-}
-
 function canCancelGrant(grant: GrantState, milestones: MilestoneState[]): boolean {
   return grant.status === 0 && milestones.every((milestone) => milestone.status === 0);
 }
@@ -137,7 +139,7 @@ async function loadGrantFromChain(grantId: number): Promise<void> {
   activeGrantId = grantId;
   activeGrant = grant;
   activeMilestones = milestones;
-  $("loadId").value = String(grantId);
+  $input("loadId").value = String(grantId);
   await refreshWithdrawable();
   renderLedger();
 }
@@ -255,6 +257,7 @@ function renderGate(grant: GrantState, milestone: MilestoneState): HTMLElement {
         const result = await reviewMilestone(grant.id, milestone.index);
         setLedgerNotice(`Review finalized in ${shortHash(result.txHash)}.`);
         await loadGrantFromChain(grant.id);
+        await refreshRecent();
         setStatus(`Milestone ${milestone.index + 1} reviewed on-chain.`, "ok");
       }).finally(() => {
         reviewing?.classList.remove("show");
@@ -306,8 +309,8 @@ function collectCreateForm(): {
   payouts: bigint[];
   total: bigint;
 } {
-  const title = $("gTitle").value.trim();
-  const grantee = $("gGrantee").value.trim();
+  const title = $input("gTitle").value.trim();
+  const grantee = $input("gGrantee").value.trim();
   const descriptions = [...document.querySelectorAll<HTMLInputElement>(".ms-desc")].map((input) => input.value.trim());
   const payoutInputs = [...document.querySelectorAll<HTMLInputElement>(".ms-pay")].map((input) => input.value.trim());
 
@@ -342,10 +345,61 @@ function addMilestoneRow(): void {
   $("msList").appendChild(row);
 }
 
+function renderRecent(items: RecentGrant[]): void {
+  const panel = $("recentPanel");
+  const list = $("recentList");
+  const meta = $("recentMeta");
+  if (items.length === 0) {
+    panel.style.display = "none";
+    return;
+  }
+  panel.style.display = "block";
+  meta.textContent = `showing ${items.length} newest`;
+  list.innerHTML = "";
+  for (const g of items) {
+    const el = document.createElement("div");
+    el.className = "recent-row";
+    const statusLabel = GSTATUS[g.status];
+    const progressText = `${g.release_summary.released_count}/${g.milestone_count} released · ${formatGen(g.release_summary.released_wei)}`;
+    el.innerHTML = `
+      <div class="rid">#${g.id}</div>
+      <div>
+        <div class="rtitle">${escapeHtml(g.title || "(untitled)")}</div>
+        <div class="rsub">${statusLabel} · locked ${formatGen(g.locked_balance)} · grantee ${short(g.grantee)}</div>
+      </div>
+      <div class="rprog">${progressText}</div>
+      <button data-load="${g.id}">Load</button>
+    `;
+    el.querySelector<HTMLButtonElement>("[data-load]")?.addEventListener("click", () => {
+      $input("loadId").value = String(g.id);
+      runAction(`Loading live grant state...`, async () => {
+        await loadGrantFromChain(g.id);
+        setStatus(`Loaded grant #${g.id} from ${config.network}.`, "ok");
+      });
+    });
+    list.appendChild(el);
+  }
+}
+
+async function refreshRecent(): Promise<void> {
+  try {
+    const items = await listRecentGrants(6);
+    renderRecent(items);
+  } catch (err) {
+    console.warn("Failed to refresh recent grants", err);
+  }
+}
+
 async function boot(): Promise<void> {
   $("net").textContent = `Network: ${config.network}`;
   $("contractMeta").textContent = `Contract: ${short(config.contractAddress)}`;
   $("rpcMeta").textContent = config.rpcUrl;
+  const explorer = contractExplorerUrl();
+  const link = $<HTMLAnchorElement>("explorerLink");
+  if (explorer) {
+    link.href = explorer;
+    link.style.display = "inline";
+  }
   updateWalletUi(null);
   setLedgerNotice("");
 
@@ -362,15 +416,21 @@ async function boot(): Promise<void> {
       await ensureWalletReady();
       const { title, grantee, descriptions, payouts, total } = collectCreateForm();
       const result = await createGrant(title, grantee, descriptions, payouts, total);
-      setLedgerNotice(`Grant created in ${shortHash(result.txHash)}.`);
+      const explorerTx = txExplorerUrl(result.txHash);
+      setLedgerNotice(
+        explorerTx
+          ? `Grant created in ${shortHash(result.txHash)} · ${explorerTx}`
+          : `Grant created in ${shortHash(result.txHash)}.`
+      );
       await loadGrantFromChain(result.grantId);
+      await refreshRecent();
       setStatus(`Grant #${result.grantId} created on ${config.network}.`, "ok");
     });
   });
 
   $("loadBtn").addEventListener("click", () => {
     runAction("Loading live grant state...", async () => {
-      const value = $("loadId").value.trim();
+      const value = $input("loadId").value.trim();
       if (!value) {
         throw new Error("Enter a grant ID to load.");
       }
@@ -380,16 +440,17 @@ async function boot(): Promise<void> {
   });
 
   $("cancelBtn").addEventListener("click", () => {
-    if (!activeGrantId) {
+    const targetId = activeGrantId;
+    if (targetId === null) {
       return;
     }
 
-    runAction(`Canceling grant #${activeGrantId}...`, async () => {
+    runAction(`Canceling grant #${targetId}...`, async () => {
       await ensureWalletReady();
-      const result = await cancelGrant(activeGrantId);
+      const result = await cancelGrant(targetId);
       setLedgerNotice(`Grant canceled in ${shortHash(result.txHash)}.`);
-      await loadGrantFromChain(activeGrantId);
-      setStatus(`Grant #${activeGrantId} canceled on-chain.`, "ok");
+      await loadGrantFromChain(targetId);
+      setStatus(`Grant #${targetId} canceled on-chain.`, "ok");
     });
   });
 
@@ -411,6 +472,7 @@ async function boot(): Promise<void> {
   updateWalletUi(restored);
   await refreshWithdrawable();
   renderLedger();
+  await refreshRecent();
 
   if (!isWalletAvailable()) {
     setStatus(`Live contract ready on ${config.network}. Reads work now; writes need MetaMask.`, "warn");

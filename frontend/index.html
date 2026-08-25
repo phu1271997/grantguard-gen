@@ -3,6 +3,8 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="icon" type="image/svg+xml" href="/logo.svg" />
+<link rel="alternate icon" href="/logo-512.png" />
 <title>GrantGuard — Milestone grants released by an on-chain AI reviewer</title>
 <style>
   /* ------------------------------------------------------------------
@@ -44,6 +46,8 @@
   .colophon{ display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap;
              font-family:"Courier New",monospace; font-size:11px; margin-top:12px;
              color:#8b93a6; text-transform:uppercase; letter-spacing:.12em; }
+  .colophon a{ color:var(--gold); text-decoration:none; border-bottom:1px dotted var(--gold); }
+  .colophon a:hover{ color:#ffcf75; border-color:#ffcf75; }
   .top-actions{ display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-bottom:24px; }
 
   .lede{ font-size:18px; color:#c3c9d6; max-width:64ch; margin:24px 0 26px; }
@@ -97,6 +101,18 @@
   .ledger-note{ font-family:"Courier New",monospace; font-size:11px; color:var(--ink-soft); }
 
   .empty{ padding:26px 20px; font-style:italic; color:var(--ink-soft); }
+
+  .recent-row{ display:grid; grid-template-columns:60px 1fr 130px 90px; gap:12px; align-items:center;
+               padding:14px 20px; border-bottom:1px solid var(--line); font-size:14px; }
+  .recent-row:last-child{ border-bottom:0; }
+  .recent-row .rid{ font-family:"Courier New",monospace; font-size:12px; color:var(--ink-soft); }
+  .recent-row .rtitle{ font-weight:600; }
+  .recent-row .rsub{ font-family:"Courier New",monospace; font-size:11px; color:var(--ink-soft); margin-top:2px; }
+  .recent-row .rprog{ font-family:"Courier New",monospace; font-size:12px; }
+  .recent-row button{ cursor:pointer; font-family:"Courier New",monospace; font-size:11px; letter-spacing:.08em;
+                      text-transform:uppercase; border:1px solid var(--ink); background:var(--ink); color:var(--panel);
+                      padding:8px 10px; border-radius:2px; }
+  @media (max-width:640px){ .recent-row{ grid-template-columns:1fr; } .recent-row button{ justify-self:start; } }
 
   .gate{ display:flex; gap:16px; padding:18px 20px; border-bottom:1px solid var(--line); }
   .gate:last-child{ border-bottom:0; }
@@ -152,6 +168,7 @@
       <span id="net">Network: demo</span>
       <span id="contractMeta">Contract: —</span>
       <span id="rpcMeta">RPC: —</span>
+      <a id="explorerLink" href="#" target="_blank" rel="noreferrer" style="display:none">Open on Explorer ↗</a>
     </div>
   </header>
 
@@ -200,6 +217,15 @@
       </p>
     </section>
   </div>
+
+  <!-- RECENT GRANTS -->
+  <section class="ledger" id="recentPanel" style="display:none">
+    <div class="ledger-head">
+      <h2>Recent grants on-chain</h2>
+      <span class="meta" id="recentMeta">—</span>
+    </div>
+    <div id="recentList"></div>
+  </section>
 
   <!-- LEDGER -->
   <section class="ledger">
