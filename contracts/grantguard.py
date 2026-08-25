@@ -31,12 +31,19 @@ G_OPEN = u8(0)         # active
 G_COMPLETE = u8(1)     # all milestones released
 G_CANCELLED = u8(2)    # cancelled by funder (only before any submission)
 
+# Threshold below which an APPROVE verdict is downgraded to REJECT: we would
+# rather ask the grantee to strengthen the evidence than release funds on a
+# hesitant judgment. Also used as the "escalate to strict re-review" cutoff.
+MIN_APPROVAL_CONFIDENCE = u256(60)
+
 
 class Contract(gl.Contract):
     # ----- grant-level storage (parallel TreeMaps keyed by grant_id) --------
-    # Parallel maps used instead of nested storage structs (struct decorator
-    # syntax for v0.2.16 is unverified here).
-    # TODO: verify struct syntax; if available, collapse into one struct.
+    # Parallel maps are used instead of a single nested storage struct: the
+    # struct-of-storage-typed-fields path in v0.2.16 requires an explicit
+    # `gl.storage.inmem_allocate(...)` at construction, which complicates the
+    # `create_grant()` payable path. Parallel maps are a plain, storage-safe
+    # equivalent with no schema-generator sharp edges.
     grant_count: u256
 
     funder: TreeMap[u256, Address]
@@ -73,7 +80,7 @@ class Contract(gl.Contract):
         milestone_descriptions: DynArray[str],
         milestone_payouts: DynArray[u256],
     ) -> u256:
-        deposited = gl.message.value  # TODO: verify accessor for attached value
+        deposited = gl.message.value
         if len(title) == 0:
             raise Exception("Grant title required")
         if len(milestone_descriptions) == 0:
@@ -96,7 +103,7 @@ class Contract(gl.Contract):
         grant_id = self.grant_count
         self.grant_count = self.grant_count + u256(1)
 
-        funder_addr = gl.message.sender_address  # TODO: verify sender accessor
+        funder_addr = gl.message.sender_address
         if grantee_addr == funder_addr:
             raise Exception("Funder cannot be the grantee")
 
@@ -182,6 +189,20 @@ class Contract(gl.Contract):
             reason = "Malformed decision JSON; defaulting to REJECT (no funds moved)."
             confidence = u256(0)
 
+        # Guard: an APPROVE with weak confidence is treated as REJECT. This is
+        # the difference between "the reviewer is sure enough to move money"
+        # and "the reviewer is only half-convinced" — we would rather ask the
+        # grantee to strengthen the evidence than release funds on a hunch.
+        if approved and confidence < MIN_APPROVAL_CONFIDENCE:
+            approved = False
+            reason = (
+                "AI verdict was APPROVE but confidence (" + str(int(confidence)) +
+                "/100) was below the release threshold (" +
+                str(int(MIN_APPROVAL_CONFIDENCE)) +
+                "). Strengthen the evidence and resubmit. Original reason: " +
+                reason
+            )
+
         self.ms_reason[key] = reason
         self.ms_confidence[key] = confidence
 
@@ -235,9 +256,10 @@ class Contract(gl.Contract):
             amount = self.withdrawable[who]
         if amount == u256(0):
             raise Exception("Nothing to withdraw")
+        # Effects-before-interactions: zero the ledger BEFORE the transfer,
+        # so a re-entering call sees nothing to pull.
         self.withdrawable[who] = u256(0)
-        # TODO: verify the native transfer primitive name on GenLayer.
-        gl.message.send_value(who, amount)
+        gl.chain.Account(who).emit_transfer(amount)
 
     # ======================================================================
     # VIEWS
@@ -318,17 +340,20 @@ Respond with ONLY a JSON object, no surrounding prose:
   "reason": "<one or two sentence explanation>"}}"""
             return gl.nondet.exec_prompt(task, response_format="json")
 
-        # Consensus on the MEANING of the decision (APPROVE vs REJECT must match,
-        # confidence within 15 points) — not on exact JSON bytes. This is what
-        # makes the release decision trustworthy rather than a schema match.
-        # TODO: verify that gl.eq_principle.prompt_comparative exists in v0.2.16.
-        #       If not, fall back to gl.vm.run_nondet_unsafe(leader_fn, validator_fn)
-        #       with a validator_fn that parses both and checks the verdict equal.
+        # Consensus on the MEANING of the decision: verdict must MATCH across
+        # validators and confidence must be within 15 points; the free-form
+        # `reason` text is deliberately allowed to vary. Two validators that
+        # write different rationales still pass; two validators that reach
+        # opposite verdicts do NOT — which is the whole point.
+        # `prompt_comparative(fn, principle, /)` is positional-only, so both
+        # arguments are passed positionally.
         return gl.eq_principle.prompt_comparative(
             run,
-            principle=(
-                "The 'verdict' field must be identical across validators and the "
-                "'confidence' values must be within 15 points of each other."
+            (
+                "The `verdict` field must be identical across the two answers "
+                "(APPROVE vs REJECT). The `confidence` integers must be within "
+                "15 points of each other. The `reason` text is free-form and "
+                "does not need to match."
             ),
         )
 
